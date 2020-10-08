@@ -103,6 +103,12 @@ var KnownPackages = map[string]PackageOverride{
 		}
 		p.AddPackage(pkg) // get the rest of the types
 	},
+	"k8s.io/api/core/v1": func(p *Parser, pkg *loader.Package) {
+		p.Schemata[TypeIdent{Name: "DNSPolicy", Package: pkg}] = apiext.JSONSchemaProps{
+			Type: "string",
+		}
+		p.AddPackage(pkg) // get the rest of the types
+	},
 }
 
 func boolPtr(b bool) *bool {
