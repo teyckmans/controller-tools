@@ -93,6 +93,7 @@ func (g Generator) Generate(ctx *genall.GenerationContext) error {
 		Checker:   ctx.Checker,
 		// Perform defaulting here to avoid ambiguity later
 		AllowDangerousTypes: g.AllowDangerousTypes != nil && *g.AllowDangerousTypes == true,
+		Roots:               ctx.Roots,
 	}
 
 	AddKnownTypes(parser)

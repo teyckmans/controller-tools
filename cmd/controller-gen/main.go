@@ -32,6 +32,7 @@ import (
 	"sigs.k8s.io/controller-tools/pkg/markers"
 	"sigs.k8s.io/controller-tools/pkg/rbac"
 	"sigs.k8s.io/controller-tools/pkg/schemapatcher"
+	"sigs.k8s.io/controller-tools/pkg/swagger"
 	"sigs.k8s.io/controller-tools/pkg/version"
 	"sigs.k8s.io/controller-tools/pkg/webhook"
 )
@@ -49,6 +50,7 @@ var (
 	// and has options for output forms.
 	allGenerators = map[string]genall.Generator{
 		"crd":         crd.Generator{},
+		"swagger":     swagger.Generator{},
 		"rbac":        rbac.Generator{},
 		"object":      deepcopy.Generator{},
 		"webhook":     webhook.Generator{},

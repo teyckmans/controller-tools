@@ -96,6 +96,11 @@ func (p *Parser) NeedCRDFor(groupKind schema.GroupKind, maxDescLen *int) {
 			},
 		}
 		crd.Spec.Versions = append(crd.Spec.Versions, ver)
+		p.CrdTypes[typeIdent] = schema.GroupVersionKind{
+			Group:   groupKind.Group,
+			Version: ver.Name,
+			Kind:    groupKind.Kind,
+		}
 	}
 
 	// markers are applied *after* initial generation of objects

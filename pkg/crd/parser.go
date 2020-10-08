@@ -72,6 +72,8 @@ type Parser struct {
 	// packages marks packages as loaded, to avoid re-loading them.
 	packages map[*loader.Package]struct{}
 
+	CrdTypes map[TypeIdent]schema.GroupVersionKind
+
 	flattener *Flattener
 
 	// AllowDangerousTypes controls the handling of non-recommended types such as float. If
@@ -87,6 +89,8 @@ type Parser struct {
 	//       because the implementation is too difficult/clunky to promote them to category 3.
 	// TODO: Should we have a more formal mechanism for putting "type patterns" in each of the above categories?
 	AllowDangerousTypes bool
+
+	Roots []*loader.Package
 }
 
 func (p *Parser) init() {
@@ -115,6 +119,9 @@ func (p *Parser) init() {
 	}
 	if p.FlattenedSchemata == nil {
 		p.FlattenedSchemata = make(map[TypeIdent]apiext.JSONSchemaProps)
+	}
+	if p.CrdTypes == nil {
+		p.CrdTypes = make(map[TypeIdent]schema.GroupVersionKind)
 	}
 }
 
@@ -157,9 +164,28 @@ func (p *Parser) indexTypes(pkg *loader.Package) {
 func (p *Parser) LookupType(pkg *loader.Package, name string) *markers.TypeInfo {
 	return p.Types[TypeIdent{Package: pkg, Name: name}]
 }
+func (p *Parser) NeedSchemaFor(pkgPath string, typeName string) {
+	pkg := p.LoaderPackage(pkgPath)
+	if pkg != nil {
+		p.NeedSchemaForType(TypeIdent{
+			Package: pkg,
+			Name:    typeName,
+		})
+	}
+}
+
+func (p *Parser) LoaderPackage(packageName string) *loader.Package {
+	for _, root := range p.Roots {
+		pkg := root.Imports()[packageName]
+		if pkg != nil {
+			return pkg
+		}
+	}
+	return nil
+}
 
 // NeedSchemaFor indicates that a schema should be generated for the given type.
-func (p *Parser) NeedSchemaFor(typ TypeIdent) {
+func (p *Parser) NeedSchemaForType(typ TypeIdent) {
 	p.init()
 
 	p.NeedPackage(typ.Package)
@@ -197,7 +223,7 @@ func (p *Parser) NeedFlattenedSchemaFor(typ TypeIdent) {
 		return
 	}
 
-	p.NeedSchemaFor(typ)
+	p.NeedSchemaForType(typ)
 	partialFlattened := p.flattener.FlattenType(typ)
 	fullyFlattened := FlattenEmbedded(partialFlattened, typ.Package)
 

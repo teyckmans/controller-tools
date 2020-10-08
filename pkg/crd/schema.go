@@ -58,7 +58,7 @@ type applyFirstMarker interface {
 
 // schemaRequester knows how to marker that another schema (e.g. via an external reference) is necessary.
 type schemaRequester interface {
-	NeedSchemaFor(typ TypeIdent)
+	NeedSchemaFor(pkgPath string, typeName string)
 }
 
 // schemaContext stores and provides information across a hierarchy of schema generation.
@@ -96,15 +96,8 @@ func (c *schemaContext) ForInfo(info *markers.TypeInfo) *schemaContext {
 
 // requestSchema asks for the schema for a type in the package with the
 // given import path.
-func (c *schemaContext) requestSchema(pkgPath, typeName string) {
-	pkg := c.pkg
-	if pkgPath != "" {
-		pkg = c.pkg.Imports()[pkgPath]
-	}
-	c.schemaRequester.NeedSchemaFor(TypeIdent{
-		Package: pkg,
-		Name:    typeName,
-	})
+func (c *schemaContext) requestSchema(pkgPath string, typeName string) {
+	c.schemaRequester.NeedSchemaFor(pkgPath, typeName)
 }
 
 // infoToSchema creates a schema for the type in the given set of type information.
@@ -224,9 +217,6 @@ func localNamedToSchema(ctx *schemaContext, ident *ast.Ident) *apiext.JSONSchema
 	typeNameInfo := typeInfo.(*types.Named).Obj()
 	pkg := typeNameInfo.Pkg()
 	pkgPath := loader.NonVendorPath(pkg.Path())
-	if pkg == ctx.pkg.Types {
-		pkgPath = ""
-	}
 	ctx.requestSchema(pkgPath, typeNameInfo.Name())
 	link := TypeRefLink(pkgPath, typeNameInfo.Name())
 	return &apiext.JSONSchemaProps{

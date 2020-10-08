@@ -17,10 +17,14 @@ limitations under the License.
 package genall
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"io"
 	"io/ioutil"
 	"os"
+
+	"github.com/go-openapi/spec"
 
 	"golang.org/x/tools/go/packages"
 	"sigs.k8s.io/yaml"
@@ -114,6 +118,33 @@ func (g GenerationContext) WriteYAML(itemPath string, objs ...interface{}) error
 		if n < len(yamlContent) {
 			return io.ErrShortWrite
 		}
+	}
+
+	return nil
+}
+
+func (g GenerationContext) WriteSwagger(itemPath string, swagger spec.Swagger) error {
+	out, err := g.Open(nil, itemPath)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+
+	swaggerJSON, err := swagger.MarshalJSON()
+	if err != nil {
+		return err
+	}
+	var prettyJSON bytes.Buffer
+	err = json.Indent(&prettyJSON, swaggerJSON, "", "  ")
+	if err != nil {
+		return err
+	}
+	n, err := out.Write(prettyJSON.Bytes())
+	if err != nil {
+		return err
+	}
+	if n < len(swaggerJSON) {
+		return io.ErrShortWrite
 	}
 
 	return nil

@@ -242,7 +242,7 @@ func (f *Flattener) cacheType(typ TypeIdent, schema apiext.JSONSchemaProps) {
 
 // loadUnflattenedSchema fetches a fresh, unflattened schema from the parser.
 func (f *Flattener) loadUnflattenedSchema(typ TypeIdent) (*apiext.JSONSchemaProps, error) {
-	f.Parser.NeedSchemaFor(typ)
+	f.Parser.NeedSchemaForType(typ)
 
 	baseSchema, found := f.Parser.Schemata[typ]
 	if !found {
@@ -309,7 +309,7 @@ func identFromRef(ref string, contextPkg *loader.Package) (TypeIdent, error) {
 		return TypeIdent{}, err
 	}
 
-	if pkgName == "" {
+	if pkgName == contextPkg.PkgPath {
 		// a local reference
 		return TypeIdent{
 			Name:    typ,
@@ -318,9 +318,10 @@ func identFromRef(ref string, contextPkg *loader.Package) (TypeIdent, error) {
 	}
 
 	// an external reference
+	pkg := contextPkg.Imports()[pkgName]
 	return TypeIdent{
 		Name:    typ,
-		Package: contextPkg.Imports()[pkgName],
+		Package: pkg,
 	}, nil
 }
 

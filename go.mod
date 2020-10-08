@@ -4,6 +4,7 @@ go 1.13
 
 require (
 	github.com/fatih/color v1.7.0
+	github.com/go-openapi/spec v0.19.9
 	github.com/gobuffalo/flect v0.2.0
 	github.com/google/go-cmp v0.3.0
 	github.com/mattn/go-colorable v0.1.2 // indirect

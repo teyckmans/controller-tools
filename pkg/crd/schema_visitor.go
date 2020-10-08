@@ -102,6 +102,7 @@ func (w schemaWalker) walkSchema(schema *apiext.JSONSchemaProps) {
 // walkMap walks over values of the given map, saving changes to them.
 func (w schemaWalker) walkMap(defs map[string]apiext.JSONSchemaProps) {
 	for name, def := range defs {
+		//nolint:gosec
 		w.walkSchema(&def)
 		// make sure the edits actually go through since we can't
 		// take a reference to the value in the map

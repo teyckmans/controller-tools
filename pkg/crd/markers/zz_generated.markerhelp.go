@@ -176,7 +176,7 @@ func (Minimum) Help() *markers.DefinitionHelp {
 	return &markers.DefinitionHelp{
 		Category: "CRD validation",
 		DetailedHelp: markers.DetailedHelp{
-			Summary: "specifies the minimum numeric value that this field can have.",
+			Summary: "specifies the minimum numeric value that this field can have. Negative integers are supported.",
 			Details: "",
 		},
 		FieldHelp: map[string]markers.DetailedHelp{},
