@@ -1,9 +1,8 @@
 package swagger
 
 import (
-	"strings"
-
 	"github.com/go-openapi/spec"
+	"strings"
 
 	"sigs.k8s.io/controller-tools/pkg/crd"
 	crdmarkers "sigs.k8s.io/controller-tools/pkg/crd/markers"
@@ -66,16 +65,17 @@ func (g Generator) Generate(ctx *genall.GenerationContext) error {
 		uniqueGroups[groupKind.Group] = struct{}{}
 	}
 	groupsInfo := ""
-	includedGroups := []string{}
+	var includedGroups []string
 	for uniqueGroup := range uniqueGroups {
-		if !contains(includedGroups, uniqueGroup) {
-			if len(includedGroups) == 0 {
-				groupsInfo = uniqueGroup
-			} else {
-				groupsInfo = groupsInfo + ", " + uniqueGroup
-			}
+		includedGroups = append(includedGroups, uniqueGroup)
+		if len(groupsInfo) == 0 {
+			groupsInfo = uniqueGroup
+		} else {
+			groupsInfo = groupsInfo + ", " + uniqueGroup
 		}
 	}
+
+	println("groups: " + groupsInfo)
 
 	swaggerSpec := spec.Swagger{
 		SwaggerProps: spec.SwaggerProps{
@@ -95,10 +95,27 @@ func (g Generator) Generate(ctx *genall.GenerationContext) error {
 	contentTypes := []string{"application/json", "application/yaml"}
 	schemes := []string{"https"}
 
-	actionReferencedTypes := make(map[string]bool)
-
 	for groupKind := range kubeKinds {
 		parser.NeedCRDFor(groupKind, g.MaxDescLen)
+	}
+
+	packageMapper := PackageMapper{
+		includedGroups: includedGroups,
+		crdTypes:       parser.CrdTypes,
+	}
+	packageMapper.init()
+
+	err := addDefinitions(&DefinitionsContext{
+		swaggerSpec:   &swaggerSpec,
+		parser:        parser,
+		packageMapper: &packageMapper,
+		roots:         ctx.Roots,
+	})
+	if err != nil {
+		return err
+	}
+
+	for groupKind := range kubeKinds {
 		crdRaw := parser.CustomResourceDefinitions[groupKind]
 
 		groupInCamelCases := ""
@@ -111,18 +128,14 @@ func (g Generator) Generate(ctx *genall.GenerationContext) error {
 			}
 		}
 
-		packageName := groupToPackageName(groupKind.Group)
-
-		println(crdRaw.Name)
-
 		actionsContext := ActionsContext{
 			groupInCamelCase: groupInCamelCases,
-			packageName:      packageName,
 			contentTypes:     contentTypes,
 			schemes:          schemes,
 			crdRaw:           &crdRaw,
 			swagger:          &swaggerSpec,
-			referencedTypes:  actionReferencedTypes,
+			packageMapper:    &packageMapper,
+			parser:           parser,
 		}
 		err := crdActions(&actionsContext)
 		if err != nil {
@@ -131,42 +144,9 @@ func (g Generator) Generate(ctx *genall.GenerationContext) error {
 
 	}
 
-	err := addDefinitions(&DefinitionsContext{
-		swaggerSpec:           &swaggerSpec,
-		parser:                parser,
-		packageMappings:       make(map[string]string), // TODO(teyckmans) support for manual package mapping config
-		actionReferencedTypes: actionReferencedTypes,
-		roots:                 ctx.Roots,
-	})
-	if err != nil {
-		return err
-	}
-
 	if err := ctx.WriteSwagger("swagger.json", swaggerSpec); err != nil {
 		return err
 	}
 
 	return nil
-}
-
-func groupToPackageName(groupName string) string {
-	groupSplits := strings.Split(groupName, ".")
-	packageName := ""
-	for i := len(groupSplits) - 1; i >= 0; i-- {
-		if len(packageName) == 0 {
-			packageName = groupSplits[i]
-		} else {
-			packageName = packageName + "." + groupSplits[i]
-		}
-	}
-	return packageName
-}
-
-func contains(collection []string, searchValue string) bool {
-	for _, currentValue := range collection {
-		if currentValue == searchValue {
-			return true
-		}
-	}
-	return false
 }

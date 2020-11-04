@@ -11,12 +11,12 @@ import (
 )
 
 type DefinitionsContext struct {
-	swaggerSpec           *spec.Swagger
-	parser                *crd.Parser
-	packageMappings       map[string]string
-	actionReferencedTypes map[string]bool
-	roots                 []*loader.Package
-	referencesToAdd       map[string]bool
+	swaggerSpec     *spec.Swagger
+	parser          *crd.Parser
+	roots           []*loader.Package
+	referencesToAdd map[string]bool
+	packageMapper   *PackageMapper
+	processedTypes  []crd.TypeIdent
 }
 
 /**
@@ -24,35 +24,12 @@ Embed simple types so we only remain with object types as elements in the swagge
 as is the case for the vanilla k8s api swagger.
 */
 func addDefinitions(ctx *DefinitionsContext) error {
-	determinePackageMappings(ctx)
-
-	addTypeDefinitions(ctx)
+	err := addTypeDefinitions(ctx)
+	if err != nil {
+		return err
+	}
 
 	return nil
-}
-
-func determinePackageMappings(ctx *DefinitionsContext) {
-	parser := ctx.parser
-
-	for typeIdent, gvk := range parser.CrdTypes {
-		packageName := groupToPackageName(gvk.Group)
-
-		mappedPackage := packageName + "." + gvk.Version
-
-		var parentPackage string
-		lastPackageSplitIndex := strings.LastIndex(typeIdent.Package.PkgPath, "/")
-		if lastPackageSplitIndex != -1 {
-			runes := []rune(typeIdent.Package.PkgPath)
-
-			parentPackage = string(runes[0:lastPackageSplitIndex])
-			parentPackage = strings.Replace(parentPackage, "/", "~1", -1)
-			ctx.packageMappings[parentPackage] = packageName
-		}
-
-		versionPackageName := parentPackage + "~1" + typeIdent.Package.Name
-
-		ctx.packageMappings[versionPackageName] = mappedPackage
-	}
 }
 
 func isSimpleType(jsonSchema *apiext.JSONSchemaProps) bool {
@@ -60,6 +37,8 @@ func isSimpleType(jsonSchema *apiext.JSONSchemaProps) bool {
 
 	if jsonSchema.Type == "" && jsonSchema.Ref != nil {
 		// ref property
+		isSimpleType = false
+	} else if jsonSchema.Ref == nil && jsonSchema.Type == "" && jsonSchema.Format == "" && len(jsonSchema.AnyOf) == 0 {
 		isSimpleType = false
 	} else if jsonSchema.Type == "object" && jsonSchema.AdditionalProperties != nil && jsonSchema.AdditionalProperties.Schema != nil {
 		// map property
@@ -105,17 +84,18 @@ func typeName(jsonReference string) string {
 	return string([]rune(jsonReference)[splitIndex+2:])
 }
 
-func addTypeDefinitions(ctx *DefinitionsContext) {
+func addTypeDefinitions(ctx *DefinitionsContext) error {
 	parser := ctx.parser
 
 	ctx.referencesToAdd = make(map[string]bool)
 
-	for typeIdent := range parser.Schemata {
+	for typeIdent := range parser.CrdTypes {
 		jsonSchema := parser.Schemata[typeIdent]
-		definitionRef := swaggerDefinitionRef(typeIdent, ctx)
-
-		if _, ok := ctx.actionReferencedTypes[definitionRef]; ok {
-			addTypeToSwaggerSpec(typeIdent, &jsonSchema, ctx.swaggerSpec, ctx)
+		if !isSimpleType(&jsonSchema) {
+			err := addTypeToSwaggerSpec(typeIdent, &jsonSchema, ctx.swaggerSpec, ctx)
+			if err != nil {
+				return err
+			}
 		}
 	}
 
@@ -133,30 +113,36 @@ func addTypeDefinitions(ctx *DefinitionsContext) {
 
 		for referenceToAdd := range referencesToAdd {
 			typeIdent := loadRef(referenceToAdd, ctx)
-			if typeIdent != nil {
+			if typeIdent != nil && !strings.HasPrefix(referenceToAdd, "#/definitions/k8s.io") {
 				jsonSchema := ctx.parser.Schemata[*typeIdent]
-				addTypeToSwaggerSpec(*typeIdent, &jsonSchema, ctx.swaggerSpec, ctx)
+				err := addTypeToSwaggerSpec(*typeIdent, &jsonSchema, ctx.swaggerSpec, ctx)
+				if err != nil {
+					return err
+				}
 			}
 		}
 	}
+
+	return nil
 }
 
 func swaggerDefinitionKey(typeIdent crd.TypeIdent, ctx *DefinitionsContext) string {
 	jsonPackageName := strings.Replace(typeIdent.Package.PkgPath, "/", "~1", -1)
 
-	return CleanUpReference(jsonPackageName+"~0"+typeIdent.Name, ctx.packageMappings)
+	return CleanUpReference(jsonPackageName+"~0"+typeIdent.Name, ctx)
 }
 
-func swaggerDefinitionRef(typeIdent crd.TypeIdent, ctx *DefinitionsContext) string {
-	return "#/definitions/" + swaggerDefinitionKey(typeIdent, ctx)
-}
+func addTypeToSwaggerSpec(typeIdent crd.TypeIdent, jsonSchema *apiext.JSONSchemaProps, swaggerSpec *spec.Swagger, ctx *DefinitionsContext) error {
 
-func addTypeToSwaggerSpec(typeIdent crd.TypeIdent, jsonSchema *apiext.JSONSchemaProps, swaggerSpec *spec.Swagger, ctx *DefinitionsContext) {
+	if containsTypeIdent(ctx.processedTypes, typeIdent) {
+		return nil
+	}
+
 	definitionKey := swaggerDefinitionKey(typeIdent, ctx)
 
 	if strings.HasPrefix(definitionKey, "io.k8s") {
 		// no need to include in crd-swagger file, included in api spec.
-		return
+		return nil
 	}
 
 	if jsonSchema.Type == "object" {
@@ -164,10 +150,26 @@ func addTypeToSwaggerSpec(typeIdent crd.TypeIdent, jsonSchema *apiext.JSONSchema
 	} else if jsonSchema.Type == "" && jsonSchema.Ref != nil {
 		swaggerSpec.Definitions[definitionKey] = jsonSchemaRefToSwaggerSchema(jsonSchema, ctx)
 	} else {
-		// TODO(teyckmans) if we get here there is something wrong with the embedding of simple references.
+		// TODO(teyckmans) if we get here there is something wrong with the embedding of references to simple types.
 		println("!!SKIPPING!! " + definitionKey + " as it is not an object but of type: " + jsonSchema.Type + " with format " + jsonSchema.Format + " and ref " + *jsonSchema.Ref)
-		return
 	}
+
+	ctx.processedTypes = append(ctx.processedTypes, typeIdent)
+
+	return nil
+}
+
+func containsTypeIdent(typeIdents []crd.TypeIdent, searchTypeIdent crd.TypeIdent) bool {
+	for _, currentTypeIdent := range typeIdents {
+		if currentTypeIdent == searchTypeIdent {
+			return true
+		}
+	}
+	return false
+}
+
+func typeIdentEquals(left crd.TypeIdent, right crd.TypeIdent) bool {
+	return left.Name == right.Name && left.Package.PkgPath == right.Package.PkgPath
 }
 
 func jsonSchemaSimpleToSwaggerSchema(jsonSchema *apiext.JSONSchemaProps, ctx *DefinitionsContext) spec.Schema {
@@ -182,6 +184,8 @@ func jsonSchemaSimpleToSwaggerSchema(jsonSchema *apiext.JSONSchemaProps, ctx *De
 	} else if jsonSchema.Type == "integer" {
 		swaggerSchema = jsonSchemaTypeWithFormatToSwaggerSchema(jsonSchema)
 	} else if jsonSchema.Type == "Any" {
+		swaggerSchema = jsonSchemaTypeWithFormatToSwaggerSchema(jsonSchema)
+	} else if jsonSchema.Type == "date-time" {
 		swaggerSchema = jsonSchemaTypeWithFormatToSwaggerSchema(jsonSchema)
 	} else if jsonSchema.Type == "array" {
 		var arrayItems spec.SchemaOrArray
@@ -216,13 +220,44 @@ func jsonSchemaSimpleToSwaggerSchema(jsonSchema *apiext.JSONSchemaProps, ctx *De
 				},
 			},
 		}
-	} else {
-		println("NEW jsonSchema.Type detected - default mapping used for type " + jsonSchema.Type)
-
+	} else if jsonSchema.Format != "" {
 		swaggerSchema = jsonSchemaTypeWithFormatToSwaggerSchema(jsonSchema)
+	} else if len(jsonSchema.AnyOf) > 0 {
+		swaggerSchema = jsonSchemaTypeWithAnyOfToSwaggerSchema(jsonSchema)
+	} else {
+		println("NEW jsonSchema.Type detected - default mapping used for type " + jsonSchema.Type + " format: " + jsonSchema.Format)
 	}
 
 	return swaggerSchema
+}
+
+func jsonSchemaTypeWithAnyOfToSwaggerSchema(jsonSchema *apiext.JSONSchemaProps) spec.Schema {
+	format := ""
+
+	if containsAnyOfWithType(jsonSchema, "integer") && containsAnyOfWithType(jsonSchema, "string") {
+		format = "int-or-string"
+	} else {
+		format = "unknown"
+	}
+
+	return spec.Schema{
+		SchemaProps: spec.SchemaProps{
+			Description: jsonSchema.Description,
+			Type:        []string{"string"},
+			Format:      format,
+			Required:    jsonSchema.Required,
+		},
+	}
+}
+
+func containsAnyOfWithType(jsonSchema *apiext.JSONSchemaProps, typeName string) bool {
+	for i := 0; i < len(jsonSchema.AnyOf); i++ {
+		anyOfSchema := jsonSchema.AnyOf[i]
+		if anyOfSchema.Type == typeName {
+			return true
+		}
+	}
+	return false
 }
 
 func followRefChain(refJSONSchema *apiext.JSONSchemaProps, ctx *DefinitionsContext) *apiext.JSONSchemaProps {
@@ -242,14 +277,24 @@ func followRefChain(refJSONSchema *apiext.JSONSchemaProps, ctx *DefinitionsConte
 }
 
 func jsonSchemaRefToSwaggerSchema(jsonSchema *apiext.JSONSchemaProps, ctx *DefinitionsContext) spec.Schema {
-	var swaggerSchema spec.Schema
+	addRef := false
 
-	refJSONSchema := followRefChain(jsonSchema, ctx)
-	embedRef := refJSONSchema != nil && isSimpleType(refJSONSchema)
+	embedRef := false
+	var refJSONSchema *apiext.JSONSchemaProps
+
+	refJSONSchema = followRefChain(jsonSchema, ctx)
+
+	embedRef = refJSONSchema != nil && isSimpleType(refJSONSchema)
+
+	var swaggerSchema spec.Schema
 
 	if embedRef {
 		swaggerSchema = jsonSchemaSimpleToSwaggerSchema(refJSONSchema, ctx)
 	} else {
+		addRef = true
+	}
+
+	if addRef {
 		// object type reference || k8s.io type
 		swaggerSchema = spec.Schema{
 			SchemaProps: spec.SchemaProps{
@@ -261,6 +306,13 @@ func jsonSchemaRefToSwaggerSchema(jsonSchema *apiext.JSONSchemaProps, ctx *Defin
 	}
 
 	return swaggerSchema
+}
+
+func isK8sRef(refSchema *apiext.JSONSchemaProps, ctx *DefinitionsContext) bool {
+	if refSchema != nil && refSchema.Ref != nil {
+		return strings.HasPrefix(*refSchema.Ref, "#/definitions/k8s.io")
+	}
+	return false
 }
 
 func jsonSchemaTypeWithFormatToSwaggerSchema(jsonSchema *apiext.JSONSchemaProps) spec.Schema {
@@ -369,7 +421,7 @@ func anyOf(current *apiext.JSONSchemaProps, swaggerSchemaProps *spec.SchemaProps
 }
 
 func swaggerRef(rawReference string, ctx *DefinitionsContext) spec.Ref {
-	referenceKey := CleanUpReference(rawReference, ctx.packageMappings)
+	referenceKey := CleanUpReference(rawReference, ctx)
 	swaggerRef := "#/definitions/" + referenceKey
 
 	if !strings.HasPrefix(referenceKey, "io.k8s") {
@@ -382,7 +434,7 @@ func swaggerRef(rawReference string, ctx *DefinitionsContext) spec.Ref {
 	return spec.MustCreateRef(swaggerRef)
 }
 
-func CleanUpReference(rawReference string, packageMappings map[string]string) string {
+func CleanUpReference(rawReference string, ctx *DefinitionsContext) string {
 	var packagePart string
 	var typeNamePart string
 	typeNameSeparatorIndex := strings.LastIndex(rawReference, "~0")
@@ -394,50 +446,7 @@ func CleanUpReference(rawReference string, packageMappings map[string]string) st
 	}
 
 	packagePart = strings.Replace(packagePart, "#/definitions/", "", -1)
+	cleanedPackagePart := strings.Replace(packagePart, "~1", "/", -1)
 
-	var packageName string
-
-	// map crd type packages directly and their parents
-	if mappedPackage, ok := packageMappings[packagePart]; ok {
-		packageName = mappedPackage
-	} else {
-		// try to match on crd type packages and their parents and check if the start matches
-		mappedByPrefix := false
-
-		for packageKey := range packageMappings {
-			cleanedPackageKey := strings.Replace(packageKey, "~1", ".", -1)
-			cleanedPackagePart := strings.Replace(packagePart, "~1", ".", -1)
-
-			if strings.HasPrefix(cleanedPackagePart, cleanedPackageKey) {
-				mappedByPrefix = true
-				mappedPackageStart := packageMappings[packageKey]
-				mappedPackageSuffix := string([]rune(cleanedPackagePart)[len(cleanedPackageKey):])
-				packageName = mappedPackageStart + mappedPackageSuffix
-			}
-		}
-
-		if !mappedByPrefix {
-			packageName = CleanUpReferencePart(packagePart)
-		}
-	}
-
-	return packageName + "." + typeNamePart
-}
-
-func CleanUpReferencePart(rawReferencePart string) string {
-	cleanedReferencePart := rawReferencePart
-
-	cleanedReferencePart = strings.Replace(cleanedReferencePart, "#/definitions/", "", 1)
-	cleanedReferencePart = strings.Replace(cleanedReferencePart, "~1", ".", -1)
-	cleanedReferencePart = strings.Replace(cleanedReferencePart, "~0", ".", -1)
-
-	parts := strings.Split(cleanedReferencePart, ".")
-	cleanedReferencePart = parts[1] + "." + parts[0]
-	if len(parts) > 2 {
-		for i := 2; i < len(parts); i++ {
-			cleanedReferencePart = cleanedReferencePart + "." + parts[i]
-		}
-	}
-
-	return cleanedReferencePart
+	return ctx.packageMapper.mapPackageAndTypeName(cleanedPackagePart, typeNamePart)
 }

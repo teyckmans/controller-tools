@@ -2,6 +2,7 @@ package swagger
 
 import (
 	"fmt"
+	"sigs.k8s.io/controller-tools/pkg/crd"
 	"strings"
 
 	apiext "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
@@ -11,20 +12,20 @@ import (
 
 type ActionsContext struct {
 	groupInCamelCase string
-	packageName      string
 	contentTypes     []string
 	schemes          []string
 	crdRaw           *apiext.CustomResourceDefinition
 	swagger          *spec.Swagger
-	referencedTypes  map[string]bool
+	packageMapper    *PackageMapper
+	parser           *crd.Parser
 }
 
 func crdActions(ctx *ActionsContext) error {
 	crdRaw := ctx.crdRaw
 
 	for i := range crdRaw.Spec.Versions {
-
-		err := crdVersionActions(ctx, crdRaw.Spec.Versions[i])
+		typeIdent := typeIdentFor(crdRaw.Spec.Group, crdRaw.Spec.Versions[i].Name, crdRaw.Spec.Names.Kind, ctx.parser)
+		err := crdVersionActions(ctx, crdRaw.Spec.Versions[i], typeIdent)
 		if err != nil {
 			return err
 		}
@@ -33,7 +34,16 @@ func crdActions(ctx *ActionsContext) error {
 	return nil
 }
 
-func crdVersionActions(ctx *ActionsContext, version apiext.CustomResourceDefinitionVersion) error {
+func typeIdentFor(group string, version string, kind string, parser *crd.Parser) *crd.TypeIdent {
+	for typeIdent, gvk := range parser.CrdTypes {
+		if gvk.Group == group && gvk.Version == version && gvk.Kind == kind {
+			return &typeIdent
+		}
+	}
+	return nil
+}
+
+func crdVersionActions(ctx *ActionsContext, version apiext.CustomResourceDefinitionVersion, typeIdent *crd.TypeIdent) error {
 	crdRaw := ctx.crdRaw
 	namespaced := crdRaw.Spec.Scope == apiext.NamespaceScoped
 
@@ -46,34 +56,32 @@ func crdVersionActions(ctx *ActionsContext, version apiext.CustomResourceDefinit
 
 	if namespaced {
 		clusterCrdURLBase := fmt.Sprintf("/apis/%s/%s/%s", crdRaw.Spec.Group, version.Name, crdRaw.Spec.Names.Plural)
-		clusterReadAction(ctx, version, clusterCrdURLBase)
+		clusterReadAction(ctx, version, clusterCrdURLBase, typeIdent)
 	}
 
-	pluralActions(ctx, version, crdURLBase, namespaced)
-	singularActions(ctx, version, crdURLBase, namespaced)
+	pluralActions(ctx, version, crdURLBase, namespaced, typeIdent)
+	singularActions(ctx, version, crdURLBase, namespaced, typeIdent)
 
 	return nil
 }
 
-func clusterReadAction(ctx *ActionsContext, version apiext.CustomResourceDefinitionVersion, crdURLPath string) {
+func clusterReadAction(ctx *ActionsContext, version apiext.CustomResourceDefinitionVersion, crdURLPath string, typeIdent *crd.TypeIdent) {
 	crdRaw := ctx.crdRaw
 	swaggerSpec := ctx.swagger
 
 	crdVersionName := version.Name
 
 	kind := crdRaw.Spec.Names.Kind
-	kindRef := fmt.Sprintf("#/definitions/%s.%s.%s", ctx.packageName, crdVersionName, crdRaw.Spec.Names.Kind)
-	ctx.referencedTypes[kindRef] = true
 
 	swaggerSpec.SwaggerProps.Paths.Paths[crdURLPath] = spec.PathItem{
 		PathItemProps: spec.PathItemProps{
-			Get:        namespacedClusterGetAction(ctx, crdVersionName, kind),
+			Get:        namespacedClusterGetAction(ctx, crdVersionName, kind, typeIdent),
 			Parameters: collectionOperationParameters(true),
 		},
 	}
 }
 
-func singularActions(ctx *ActionsContext, version apiext.CustomResourceDefinitionVersion, crdURLBase string, namespaced bool) {
+func singularActions(ctx *ActionsContext, version apiext.CustomResourceDefinitionVersion, crdURLBase string, namespaced bool, typeIdent *crd.TypeIdent) {
 	crdRaw := ctx.crdRaw
 	swaggerSpec := ctx.swagger
 
@@ -82,8 +90,8 @@ func singularActions(ctx *ActionsContext, version apiext.CustomResourceDefinitio
 	crdURLPath := fmt.Sprintf("%s/{name}", crdURLBase)
 
 	kind := crdRaw.Spec.Names.Kind
-	kindRef := fmt.Sprintf("#/definitions/%s.%s.%s", ctx.packageName, crdVersionName, crdRaw.Spec.Names.Kind)
-	ctx.referencedTypes[kindRef] = true
+	mappedTypeIndent := ctx.packageMapper.mapTypeIdent(*typeIdent)
+	kindRef := fmt.Sprintf("#/definitions/%s", mappedTypeIndent)
 
 	nameParameter := simpleParameter(
 		"string",
@@ -157,7 +165,7 @@ func patchAction(ctx *ActionsContext, crdVersionName string, kind string, kindRe
 			Tags:     operationTags(ctx, crdVersionName),
 			ID:       operationID(ctx, crdVersionName, action, "", status, namespaced),
 			Parameters: []spec.Parameter{
-				bodyParameter("#/definitions/io.k8s.apimachinery.pkg.apis.meta.v1.Patch", true, ctx),
+				bodyParameter("#/definitions/io.k8s.apimachinery.pkg.apis.meta.v1.Patch", true),
 				dryRunParameter(),
 				fieldManagerParameter(),
 			},
@@ -177,7 +185,6 @@ func deleteAction(ctx *ActionsContext, crdVersionName string, kind string, statu
 	action := "delete"
 
 	statusRef := "#/definitions/io.k8s.apimachinery.pkg.apis.meta.v1.Status"
-	ctx.referencedTypes[statusRef] = true
 
 	responses := operationResponses()
 	responses[200] = spec.Response{
@@ -202,7 +209,7 @@ func deleteAction(ctx *ActionsContext, crdVersionName string, kind string, statu
 			Tags:        operationTags(ctx, crdVersionName),
 			ID:          operationID(ctx, crdVersionName, action, "", status, namespaced),
 			Parameters: []spec.Parameter{
-				bodyParameter("#/definitions/io.k8s.apimachinery.pkg.apis.meta.v1.DeleteOptions", false, ctx),
+				bodyParameter("#/definitions/io.k8s.apimachinery.pkg.apis.meta.v1.DeleteOptions", false),
 				dryRunParameter(),
 				integerQueryParameter(
 					"gracePeriodSeconds",
@@ -252,7 +259,7 @@ func putAction(ctx *ActionsContext, crdVersionName string, kind string, kindRef 
 			Tags:        operationTags(ctx, crdVersionName),
 			ID:          operationID(ctx, crdVersionName, "replace", "", status, namespaced),
 			Parameters: []spec.Parameter{
-				bodyParameter(kindRef, true, ctx),
+				bodyParameter(kindRef, true),
 				dryRunParameter(),
 				fieldManagerParameter(),
 			},
@@ -268,12 +275,11 @@ func putAction(ctx *ActionsContext, crdVersionName string, kind string, kindRef 
 	}
 }
 
-func namespacedClusterGetAction(ctx *ActionsContext, crdVersionName string, kind string) *spec.Operation {
+func namespacedClusterGetAction(ctx *ActionsContext, crdVersionName string, kind string, typeIdent *crd.TypeIdent) *spec.Operation {
 	action := "list"
 
-	crdRaw := ctx.crdRaw
-	listKindRef := fmt.Sprintf("#/definitions/%s.%s.%s", ctx.packageName, crdVersionName, crdRaw.Spec.Names.ListKind)
-	ctx.referencedTypes[listKindRef] = true
+	mappedTypeIdent := ctx.packageMapper.mapTypeIdent(*typeIdent)
+	listKindRef := fmt.Sprintf("#/definitions/%s", mappedTypeIdent)
 
 	responses := operationResponses()
 	responses[200] = spec.Response{
@@ -338,17 +344,17 @@ func getAction(ctx *ActionsContext, crdVersionName string, kind string, kindRef 
 	}
 }
 
-func pluralActions(ctx *ActionsContext, version apiext.CustomResourceDefinitionVersion, crdURLPath string, namespaced bool) {
+func pluralActions(ctx *ActionsContext, version apiext.CustomResourceDefinitionVersion, crdURLPath string, namespaced bool, typeIdent *crd.TypeIdent) {
 	crdRaw := ctx.crdRaw
 	swaggerSpec := ctx.swagger
 
 	crdVersionName := version.Name
 
 	kind := crdRaw.Spec.Names.Kind
-	kindRef := fmt.Sprintf("#/definitions/%s.%s.%s", ctx.packageName, crdVersionName, crdRaw.Spec.Names.Kind)
-	ctx.referencedTypes[kindRef] = true
-	listKindRef := fmt.Sprintf("#/definitions/%s.%s.%s", ctx.packageName, crdVersionName, crdRaw.Spec.Names.ListKind)
-	ctx.referencedTypes[listKindRef] = true
+	mappedType := ctx.packageMapper.mapTypeIdent(*typeIdent)
+	kindRef := fmt.Sprintf("#/definitions/%s", mappedType)
+	mappedListType := ctx.packageMapper.mapPackageAndTypeName(typeIdent.Package.PkgPath, crdRaw.Spec.Names.ListKind)
+	listKindRef := fmt.Sprintf("#/definitions/%s", mappedListType)
 
 	var resourceParameters []spec.Parameter
 
@@ -379,7 +385,6 @@ func deleteCollectionAction(ctx *ActionsContext, crdVersionName string, kind str
 	responses := operationResponses()
 
 	statusRef := "#/definitions/io.k8s.apimachinery.pkg.apis.meta.v1.Status"
-	ctx.referencedTypes[statusRef] = true
 
 	responses[200] = spec.Response{
 		ResponseProps: spec.ResponseProps{
@@ -441,7 +446,7 @@ func postAction(ctx *ActionsContext, crdVersionName string, kind string, kindRef
 			Tags:        operationTags(ctx, crdVersionName),
 			ID:          operationID(ctx, crdVersionName, "create", "", "", namespaced),
 			Parameters: []spec.Parameter{
-				bodyParameter(kindRef, true, ctx),
+				bodyParameter(kindRef, true),
 				dryRunParameter(),
 				fieldManagerParameter(),
 			},
@@ -552,10 +557,8 @@ func simpleParameter(simpleType string, name string, desc string, in string, uni
 	}
 }
 
-func bodyParameter(definitionName string, required bool, ctx *ActionsContext) spec.Parameter {
+func bodyParameter(definitionName string, required bool) spec.Parameter {
 	var param spec.Parameter
-
-	ctx.referencedTypes[definitionName] = true
 
 	param = spec.Parameter{
 		ParamProps: spec.ParamProps{
