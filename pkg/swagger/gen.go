@@ -1,6 +1,9 @@
 package swagger
 
 import (
+	"go/ast"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"sigs.k8s.io/controller-tools/pkg/loader"
 	"strings"
 
 	"sigs.k8s.io/controller-tools/pkg/crd"
@@ -12,6 +15,7 @@ import (
 )
 
 type Generator struct {
+	CrdRootPackage string `marker:",required"`
 	// AllowDangerousTypes allows types which are usually omitted from CRD generation
 	// because they are not recommended.
 	//
@@ -28,6 +32,10 @@ type Generator struct {
 	// n indicates limit the description to at most n characters and truncate the description to
 	// closest sentence boundary if it exceeds n characters.
 	MaxDescLen *int `marker:",optional"`
+}
+
+func (Generator) CheckFilter() loader.NodeFilter {
+	return filterTypesForSwagger
 }
 
 func (Generator) RegisterMarkers(into *markers.Registry) error {
@@ -60,9 +68,16 @@ func (g Generator) Generate(ctx *genall.GenerationContext) error {
 		return nil
 	}
 
+	filteredKubeKinds := make(map[schema.GroupKind]crd.TypeIdent)
+	for groupKind, typeIdent := range kubeKinds {
+		if strings.HasPrefix(typeIdent.Package.PkgPath, g.CrdRootPackage) {
+			filteredKubeKinds[groupKind] = typeIdent
+		}
+	}
+
 	// build string with list of groups for title of the swagger file.
 	uniqueGroups := make(map[string]struct{}) // fake set
-	for groupKind := range kubeKinds {
+	for groupKind := range filteredKubeKinds {
 		uniqueGroups[groupKind.Group] = struct{}{}
 	}
 	groupsInfo := ""
@@ -96,27 +111,29 @@ func (g Generator) Generate(ctx *genall.GenerationContext) error {
 	contentTypes := []string{"application/json", "application/yaml"}
 	schemes := []string{"https"}
 
-	for groupKind := range kubeKinds {
+	for groupKind := range filteredKubeKinds {
 		parser.NeedCRDFor(groupKind, g.MaxDescLen)
 	}
 
 	packageMapper := PackageMapper{
 		includedGroups: includedGroups,
 		crdTypes:       parser.CrdTypes,
+		crdRootPackage: g.CrdRootPackage,
 	}
 	packageMapper.init()
 
 	err := addDefinitions(&DefinitionsContext{
-		swaggerSpec:   &swaggerSpec,
-		parser:        parser,
-		packageMapper: &packageMapper,
-		roots:         ctx.Roots,
+		swaggerSpec:    &swaggerSpec,
+		parser:         parser,
+		packageMapper:  &packageMapper,
+		roots:          ctx.Roots,
+		crdRootPackage: g.CrdRootPackage,
 	})
 	if err != nil {
 		return err
 	}
 
-	for groupKind := range kubeKinds {
+	for groupKind := range filteredKubeKinds {
 		crdRaw := parser.CustomResourceDefinitions[groupKind]
 
 		groupInCamelCases := ""
@@ -150,4 +167,8 @@ func (g Generator) Generate(ctx *genall.GenerationContext) error {
 	}
 
 	return nil
+}
+
+func filterTypesForSwagger(node ast.Node) bool {
+	return true
 }

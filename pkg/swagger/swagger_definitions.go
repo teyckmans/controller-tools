@@ -17,6 +17,7 @@ type DefinitionsContext struct {
 	referencesToAdd map[string]bool
 	packageMapper   *PackageMapper
 	processedTypes  []crd.TypeIdent
+	crdRootPackage  string
 }
 
 /**
@@ -90,11 +91,13 @@ func addTypeDefinitions(ctx *DefinitionsContext) error {
 	ctx.referencesToAdd = make(map[string]bool)
 
 	for typeIdent := range parser.CrdTypes {
-		jsonSchema := parser.Schemata[typeIdent]
-		if !isSimpleType(&jsonSchema) {
-			err := addTypeToSwaggerSpec(typeIdent, &jsonSchema, ctx.swaggerSpec, ctx)
-			if err != nil {
-				return err
+		if strings.HasPrefix(typeIdent.Package.PkgPath, ctx.crdRootPackage) {
+			jsonSchema := parser.Schemata[typeIdent]
+			if !isSimpleType(&jsonSchema) {
+				err := addTypeToSwaggerSpec(typeIdent, &jsonSchema, ctx.swaggerSpec, ctx)
+				if err != nil {
+					return err
+				}
 			}
 		}
 	}

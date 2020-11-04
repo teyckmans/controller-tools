@@ -12,6 +12,7 @@ type PackageMapper struct {
 	includedGroups      []string
 	crdTypes            map[crd.TypeIdent]schema.GroupVersionKind
 	groupMappingDetails []GroupMappingDetail
+	crdRootPackage      string
 }
 
 type GroupMappingDetail struct {
@@ -35,7 +36,7 @@ func (pm *PackageMapper) initGroup(groupName string) {
 
 	for typeIdent, gvk := range pm.crdTypes {
 
-		if gvk.Group == groupName {
+		if gvk.Group == groupName && strings.HasPrefix(typeIdent.Package.PkgPath, pm.crdRootPackage) {
 
 			if groupMappingDetail.sharedPackage == "" {
 				groupMappingDetail.sharedPackage = typeIdent.Package.PkgPath
@@ -76,7 +77,7 @@ func (pm *PackageMapper) initGroup(groupName string) {
 	pm.groupMappingDetails = append(pm.groupMappingDetails, groupMappingDetail)
 
 	for typeIdent, gvk := range pm.crdTypes {
-		if gvk.Group == groupName {
+		if gvk.Group == groupName && strings.HasPrefix(typeIdent.Package.PkgPath, pm.crdRootPackage) {
 			println("\t" + typeIdent.Package.PkgPath + "/" + typeIdent.Name + " => " + pm.mapTypeIdent(typeIdent))
 		}
 	}
