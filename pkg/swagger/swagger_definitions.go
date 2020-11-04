@@ -285,7 +285,10 @@ func jsonSchemaRefToSwaggerSchema(jsonSchema *apiext.JSONSchemaProps, ctx *Defin
 	var swaggerSchema spec.Schema
 
 	if embedRef {
-		swaggerSchema = jsonSchemaSimpleToSwaggerSchema(refJSONSchema, ctx)
+		copy := refJSONSchema.DeepCopy()
+		copy.Description = jsonSchema.Description
+
+		swaggerSchema = jsonSchemaSimpleToSwaggerSchema(copy, ctx)
 	} else {
 		addRef = true
 	}

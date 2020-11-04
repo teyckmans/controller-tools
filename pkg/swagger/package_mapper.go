@@ -28,27 +28,6 @@ func (pm *PackageMapper) init() {
 
 }
 
-func (pm *PackageMapper) groupToPackageName(groupName string) string {
-	groupSplits := strings.Split(groupName, ".")
-	packageName := ""
-	for i := len(groupSplits) - 1; i >= 0; i-- {
-		if len(packageName) == 0 {
-			packageName = groupSplits[i]
-		} else {
-			packageName = packageName + "." + groupSplits[i]
-		}
-	}
-	return packageName
-}
-
-func (pm *PackageMapper) mapTypeIdent(typeIdent crd.TypeIdent) string {
-	return pm.mapPackageAndTypeName(typeIdent.Package.PkgPath, typeIdent.Name)
-}
-
-func (pm *PackageMapper) mapPackageAndTypeName(pkgPath string, typeName string) string {
-	return pm.mapAbsoluteTypeName(pkgPath + "/" + typeName)
-}
-
 func (pm *PackageMapper) initGroup(groupName string) {
 	groupMappingDetail := GroupMappingDetail{
 		groupName: groupName,
@@ -103,6 +82,27 @@ func (pm *PackageMapper) initGroup(groupName string) {
 	}
 }
 
+func (pm *PackageMapper) groupToPackageName(groupName string) string {
+	groupSplits := strings.Split(groupName, ".")
+	packageName := ""
+	for i := len(groupSplits) - 1; i >= 0; i-- {
+		if len(packageName) == 0 {
+			packageName = groupSplits[i]
+		} else {
+			packageName = packageName + "." + groupSplits[i]
+		}
+	}
+	return packageName
+}
+
+func (pm *PackageMapper) mapTypeIdent(typeIdent crd.TypeIdent) string {
+	return pm.mapPackageAndTypeName(typeIdent.Package.PkgPath, typeIdent.Name)
+}
+
+func (pm *PackageMapper) mapPackageAndTypeName(pkgPath string, typeName string) string {
+	return pm.mapAbsoluteTypeName(pkgPath + "/" + typeName)
+}
+
 func (pm *PackageMapper) mapAbsoluteTypeName(rawType string) string {
 	mappedPackage := ""
 
@@ -153,11 +153,20 @@ func (pm *PackageMapper) mapAbsoluteTypeName(rawType string) string {
 
 func (pm *PackageMapper) matchingGroup(rawType string) *GroupMappingDetail {
 	var resultDetail *GroupMappingDetail
+
 	for i := 0; i < len(pm.groupMappingDetails); i++ {
-		groupMappingDetail := pm.groupMappingDetails[i]
-		if strings.HasPrefix(rawType, groupMappingDetail.sharedPackage) {
-			if resultDetail != nil && len(groupMappingDetail.groupName) > len(resultDetail.groupName) {
-				resultDetail = &groupMappingDetail
+		currentGroupMappingDetail := pm.groupMappingDetails[i]
+
+		if strings.HasPrefix(rawType, currentGroupMappingDetail.sharedPackage) {
+			match := false
+			if resultDetail == nil {
+				match = true
+			} else {
+				match = len(currentGroupMappingDetail.groupName) > len(resultDetail.groupName)
+			}
+
+			if match {
+				resultDetail = &currentGroupMappingDetail
 			}
 		}
 	}
