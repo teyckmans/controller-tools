@@ -1,13 +1,14 @@
 package swagger
 
 import (
-	"github.com/go-openapi/spec"
 	"strings"
 
 	"sigs.k8s.io/controller-tools/pkg/crd"
 	crdmarkers "sigs.k8s.io/controller-tools/pkg/crd/markers"
 	"sigs.k8s.io/controller-tools/pkg/genall"
 	"sigs.k8s.io/controller-tools/pkg/markers"
+
+	"github.com/go-openapi/spec"
 )
 
 type Generator struct {

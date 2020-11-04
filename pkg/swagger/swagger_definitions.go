@@ -168,10 +168,6 @@ func containsTypeIdent(typeIdents []crd.TypeIdent, searchTypeIdent crd.TypeIdent
 	return false
 }
 
-func typeIdentEquals(left crd.TypeIdent, right crd.TypeIdent) bool {
-	return left.Name == right.Name && left.Package.PkgPath == right.Package.PkgPath
-}
-
 func jsonSchemaSimpleToSwaggerSchema(jsonSchema *apiext.JSONSchemaProps, ctx *DefinitionsContext) spec.Schema {
 	var swaggerSchema spec.Schema
 
@@ -306,13 +302,6 @@ func jsonSchemaRefToSwaggerSchema(jsonSchema *apiext.JSONSchemaProps, ctx *Defin
 	}
 
 	return swaggerSchema
-}
-
-func isK8sRef(refSchema *apiext.JSONSchemaProps, ctx *DefinitionsContext) bool {
-	if refSchema != nil && refSchema.Ref != nil {
-		return strings.HasPrefix(*refSchema.Ref, "#/definitions/k8s.io")
-	}
-	return false
 }
 
 func jsonSchemaTypeWithFormatToSwaggerSchema(jsonSchema *apiext.JSONSchemaProps) spec.Schema {

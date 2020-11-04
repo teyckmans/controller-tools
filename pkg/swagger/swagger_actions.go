@@ -2,10 +2,11 @@ package swagger
 
 import (
 	"fmt"
-	"sigs.k8s.io/controller-tools/pkg/crd"
 	"strings"
 
 	apiext "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+
+	"sigs.k8s.io/controller-tools/pkg/crd"
 
 	"github.com/go-openapi/spec"
 )

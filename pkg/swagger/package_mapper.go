@@ -1,9 +1,11 @@
 package swagger
 
 import (
-	"k8s.io/apimachinery/pkg/runtime/schema"
-	"sigs.k8s.io/controller-tools/pkg/crd"
 	"strings"
+
+	"k8s.io/apimachinery/pkg/runtime/schema"
+
+	"sigs.k8s.io/controller-tools/pkg/crd"
 )
 
 type PackageMapper struct {
