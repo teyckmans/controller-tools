@@ -114,6 +114,14 @@ var KnownPackages = map[string]PackageOverride{
 		}
 		p.AddPackage(pkg) // get the rest of the types
 	},
+	// TODO(teyckmans) this was needed to make the swagger schema generation for knative work
+	// TODO(teyckmans) need an extension point so types don't need to be hard coded.
+	"net/url": func(p *Parser, pkg *loader.Package) {
+		p.Schemata[TypeIdent{Name: "URL", Package: pkg}] = apiext.JSONSchemaProps{
+			Type:   "string",
+			Format: "url",
+		}
+	},
 }
 
 func boolPtr(b bool) *bool {

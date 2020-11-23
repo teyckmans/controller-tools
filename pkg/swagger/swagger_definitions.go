@@ -17,7 +17,7 @@ type DefinitionsContext struct {
 	referencesToAdd map[string]bool
 	packageMapper   *PackageMapper
 	processedTypes  []crd.TypeIdent
-	crdRootPackage  string
+	crdRootPackage  *string
 }
 
 /**
@@ -85,13 +85,21 @@ func typeName(jsonReference string) string {
 	return string([]rune(jsonReference)[splitIndex+2:])
 }
 
+func (dc DefinitionsContext) hasPrefix(pkgPath string) bool {
+	if dc.crdRootPackage == nil {
+		return true
+	} else {
+		return strings.HasPrefix(pkgPath, *dc.crdRootPackage)
+	}
+}
+
 func addTypeDefinitions(ctx *DefinitionsContext) error {
 	parser := ctx.parser
 
 	ctx.referencesToAdd = make(map[string]bool)
 
 	for typeIdent := range parser.CrdTypes {
-		if strings.HasPrefix(typeIdent.Package.PkgPath, ctx.crdRootPackage) {
+		if ctx.hasPrefix(typeIdent.Package.PkgPath) {
 			jsonSchema := parser.Schemata[typeIdent]
 			if !isSimpleType(&jsonSchema) {
 				err := addTypeToSwaggerSpec(typeIdent, &jsonSchema, ctx.swaggerSpec, ctx)
@@ -183,7 +191,14 @@ func jsonSchemaSimpleToSwaggerSchema(jsonSchema *apiext.JSONSchemaProps, ctx *De
 	} else if jsonSchema.Type == "integer" {
 		swaggerSchema = jsonSchemaTypeWithFormatToSwaggerSchema(jsonSchema)
 	} else if jsonSchema.Type == "Any" {
-		swaggerSchema = jsonSchemaTypeWithFormatToSwaggerSchema(jsonSchema)
+		swaggerSchema = spec.Schema{
+			SchemaProps: spec.SchemaProps{
+				Description: jsonSchema.Description,
+				Type:        []string{"string"},
+				Format:      jsonSchema.Format,
+				Required:    jsonSchema.Required,
+			},
+		}
 	} else if jsonSchema.Type == "date-time" {
 		swaggerSchema = jsonSchemaTypeWithFormatToSwaggerSchema(jsonSchema)
 	} else if jsonSchema.Type == "array" {

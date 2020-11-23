@@ -15,7 +15,7 @@ import (
 )
 
 type Generator struct {
-	CrdRootPackage string `marker:",required"`
+	CrdRootPackage *string `marker:",optional"`
 	// AllowDangerousTypes allows types which are usually omitted from CRD generation
 	// because they are not recommended.
 	//
@@ -70,8 +70,12 @@ func (g Generator) Generate(ctx *genall.GenerationContext) error {
 
 	filteredKubeKinds := make(map[schema.GroupKind]crd.TypeIdent)
 	for groupKind, typeIdent := range kubeKinds {
-		if strings.HasPrefix(typeIdent.Package.PkgPath, g.CrdRootPackage) {
+		if g.CrdRootPackage == nil {
 			filteredKubeKinds[groupKind] = typeIdent
+		} else {
+			if strings.HasPrefix(typeIdent.Package.PkgPath, *g.CrdRootPackage) {
+				filteredKubeKinds[groupKind] = typeIdent
+			}
 		}
 	}
 

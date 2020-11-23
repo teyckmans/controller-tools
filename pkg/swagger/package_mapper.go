@@ -12,7 +12,7 @@ type PackageMapper struct {
 	includedGroups      []string
 	crdTypes            map[crd.TypeIdent]schema.GroupVersionKind
 	groupMappingDetails []GroupMappingDetail
-	crdRootPackage      string
+	crdRootPackage      *string
 }
 
 type GroupMappingDetail struct {
@@ -29,6 +29,14 @@ func (pm *PackageMapper) init() {
 
 }
 
+func (pm *PackageMapper) hasPrefix(pkgPath string) bool {
+	if pm.crdRootPackage == nil {
+		return true
+	} else {
+		return strings.HasPrefix(pkgPath, *pm.crdRootPackage)
+	}
+}
+
 func (pm *PackageMapper) initGroup(groupName string) {
 	groupMappingDetail := GroupMappingDetail{
 		groupName: groupName,
@@ -36,7 +44,7 @@ func (pm *PackageMapper) initGroup(groupName string) {
 
 	for typeIdent, gvk := range pm.crdTypes {
 
-		if gvk.Group == groupName && strings.HasPrefix(typeIdent.Package.PkgPath, pm.crdRootPackage) {
+		if gvk.Group == groupName && pm.hasPrefix(typeIdent.Package.PkgPath) {
 
 			if groupMappingDetail.sharedPackage == "" {
 				groupMappingDetail.sharedPackage = typeIdent.Package.PkgPath
@@ -77,7 +85,7 @@ func (pm *PackageMapper) initGroup(groupName string) {
 	pm.groupMappingDetails = append(pm.groupMappingDetails, groupMappingDetail)
 
 	for typeIdent, gvk := range pm.crdTypes {
-		if gvk.Group == groupName && strings.HasPrefix(typeIdent.Package.PkgPath, pm.crdRootPackage) {
+		if gvk.Group == groupName && pm.hasPrefix(typeIdent.Package.PkgPath) {
 			println("\t" + typeIdent.Package.PkgPath + "/" + typeIdent.Name + " => " + pm.mapTypeIdent(typeIdent))
 		}
 	}
@@ -111,7 +119,7 @@ func (pm *PackageMapper) mapAbsoluteTypeName(rawType string) string {
 
 	sharedPackage := ""
 	if groupMappingDetail != nil {
-		mappedPackage = groupMappingDetail.groupName
+		mappedPackage = groupMappingDetail.groupPackageName
 		sharedPackage = groupMappingDetail.sharedPackage
 	}
 
@@ -141,15 +149,7 @@ func (pm *PackageMapper) mapAbsoluteTypeName(rawType string) string {
 		}
 	}
 
-	parts := strings.Split(mappedPackage, ".")
-	cleanedReferencePart := parts[1] + "." + parts[0]
-	if len(parts) > 2 {
-		for i := 2; i < len(parts); i++ {
-			cleanedReferencePart = cleanedReferencePart + "." + parts[i]
-		}
-	}
-
-	return cleanedReferencePart
+	return mappedPackage
 }
 
 func (pm *PackageMapper) matchingGroup(rawType string) *GroupMappingDetail {
