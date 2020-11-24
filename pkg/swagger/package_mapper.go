@@ -149,7 +149,11 @@ func (pm *PackageMapper) mapAbsoluteTypeName(rawType string) string {
 		}
 	}
 
-	return mappedPackage
+	if strings.HasPrefix(mappedPackage, "k8s.io") {
+		return strings.Replace(mappedPackage, "k8s.io", "io.k8s", 1)
+	} else {
+		return mappedPackage
+	}
 }
 
 func (pm *PackageMapper) matchingGroup(rawType string) *GroupMappingDetail {
